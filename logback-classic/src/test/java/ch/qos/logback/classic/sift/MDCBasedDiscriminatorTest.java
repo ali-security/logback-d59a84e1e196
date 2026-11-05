@@ -77,4 +77,54 @@ public class MDCBasedDiscriminatorTest {
         String discriminatorValue = discriminator.getDiscriminatingValue(event);
         assertEquals(DEFAULT_VAL, discriminatorValue);
     }
+
+    /**
+     * Path characters in the MDC value which could point outside the directory of
+     * a file name built from it cause the value to be rejected (e.g. SiftingAppender
+     * nested FileAppenders).
+     */
+    @Test
+    public void pathCharactersYieldDefaultValue() {
+        logbackMDCAdapter.put(key, "a/b\\..\\..\\c" + value);
+        event = new LoggingEvent("a", logger, Level.DEBUG, "", null, null);
+        assertEquals(DEFAULT_VAL, discriminator.getDiscriminatingValue(event));
+
+        logbackMDCAdapter.put(key, "///foo\\\\bar//baz\\");
+        event = new LoggingEvent("a", logger, Level.DEBUG, "", null, null);
+        assertEquals(DEFAULT_VAL, discriminator.getDiscriminatingValue(event));
+    }
+
+    /**
+     * MDC values which could point outside the directory of a file name built from
+     * them yield the default value.
+     */
+    @Test
+    public void pathTraversalValuesYieldDefaultValue() {
+        String[] traversalValues = { "..", "../x", "..\\x", "x/../../y", "x\\..\\y", "x/..", "x/ ../y", "x/.. /y",
+                "x/.../y", "/etc/passwd", "\\\\server\\share", "C:\\x", "c:/x", "C:sub\\x", "C:..\\x", "C:..",
+                "C:a..b" };
+        for (String traversal : traversalValues) {
+            logbackMDCAdapter.put(key, traversal);
+            assertEquals(DEFAULT_VAL, discriminatingValue(), traversal);
+        }
+    }
+
+    /**
+     * Values which stay within the directory, including ones with inner path
+     * separators or dots, are returned unchanged.
+     */
+    @Test
+    public void inBoundsValuesAreReturnedUnchanged() {
+        String[] inBoundsValues = { value, "tenantA/user1", "tenantA\\user1", "a.b", ".hidden", "trailing.",
+                "x/./y", "a..b", "user@example.com", "a,b", "(id)", "tenant:1", "c:x", "u:123", "", new String(new char[200]).replace('\0', 'a') };
+        for (String inBounds : inBoundsValues) {
+            logbackMDCAdapter.put(key, inBounds);
+            assertEquals(inBounds, discriminatingValue(), inBounds);
+        }
+    }
+
+    private String discriminatingValue() {
+        event = new LoggingEvent("a", logger, Level.DEBUG, "", null, null);
+        return discriminator.getDiscriminatingValue(event);
+    }
 }

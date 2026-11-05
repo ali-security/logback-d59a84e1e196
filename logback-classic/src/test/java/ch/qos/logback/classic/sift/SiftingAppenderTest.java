@@ -48,6 +48,9 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -179,6 +182,58 @@ public class SiftingAppenderTest {
         FileAppender<ILoggingEvent> fileAppenderA_2 = (FileAppender<ILoggingEvent>) sa.getAppenderTracker().find("A-"+diff);
         assertTrue(fileAppenderA_2.isStarted());
         
+    }
+
+    /**
+     * Path characters in an MDC value must not allow a nested FileAppender to
+     * write outside the directory configured in the sift element.
+     */
+    @Test
+    public void pathTraversalViaMdcValueIsPrevented() throws JoranException, IOException {
+        loggerContext.putProperty("DIR_PREFIX", randomOutputDir);
+        // a directory a legitimate discriminating value "x" would have used
+        assertTrue(new File(randomOutputDir + "log-x").mkdirs());
+        configure(SIFT_FOLDER_PREFIX + "fileAppender.xml");
+        SiftingAppender sa = (SiftingAppender) root.getAppender("SIFT");
+
+        String escapedName = "escaped-" + diff + ".txt";
+        logbackMDCAdapter.put("collision", "x/../../escaped-" + diff);
+        logNewEventViaSiftingAppender(sa, System.currentTimeMillis());
+
+        FileAppender<ILoggingEvent> fileAppender = singleFileAppender(sa);
+        File logFile = new File(fileAppender.getFile()).getCanonicalFile();
+        assertEquals(new File(randomOutputDir).getCanonicalFile(), logFile.getParentFile());
+        assertEquals("log-collisionDefault.txt", logFile.getName());
+        assertFalse(new File(CoreTestConstants.OUTPUT_DIR_PREFIX + escapedName).exists());
+    }
+
+    /**
+     * An MDC value with an inner path separator keeps mapping to a nested
+     * directory below the directory configured in the sift element.
+     */
+    @Test
+    public void inBoundsNestedDirectoryMdcValueIsKept() throws JoranException, IOException {
+        loggerContext.putProperty("DIR_PREFIX", randomOutputDir);
+        configure(SIFT_FOLDER_PREFIX + "fileAppender.xml");
+        SiftingAppender sa = (SiftingAppender) root.getAppender("SIFT");
+
+        logbackMDCAdapter.put("collision", "tenantA/user1");
+        logNewEventViaSiftingAppender(sa, System.currentTimeMillis());
+
+        FileAppender<ILoggingEvent> fileAppender = singleFileAppender(sa);
+        assertNotNull(sa.getAppenderTracker().find("tenantA/user1"));
+        File logFile = new File(fileAppender.getFile()).getCanonicalFile();
+        assertEquals(new File(randomOutputDir, "log-tenantA").getCanonicalFile(), logFile.getParentFile());
+        assertEquals("user1.txt", logFile.getName());
+        assertTrue(logFile.exists());
+    }
+
+    private FileAppender<ILoggingEvent> singleFileAppender(SiftingAppender sa) {
+        Collection<Appender<ILoggingEvent>> appenders = sa.getAppenderTracker().allComponents();
+        assertEquals(1, appenders.size());
+        FileAppender<ILoggingEvent> fileAppender = (FileAppender<ILoggingEvent>) appenders.iterator().next();
+        assertTrue(fileAppender.isStarted());
+        return fileAppender;
     }
 
     private void logNewEventViaSiftingAppender(SiftingAppender sa, long timestamp) {
