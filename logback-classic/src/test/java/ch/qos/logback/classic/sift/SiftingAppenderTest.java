@@ -228,6 +228,53 @@ public class SiftingAppenderTest {
         assertTrue(logFile.exists());
     }
 
+    /**
+     * Variable references such as <code>${file.separator}</code> combined with
+     * '..' in an MDC value must not allow a nested FileAppender to write outside
+     * the directory configured in the sift element.
+     */
+    @Test
+    public void pathTraversalViaVariableSubstitutionInMdcValueIsPrevented() throws JoranException, IOException {
+        loggerContext.putProperty("DIR_PREFIX", randomOutputDir);
+        assertTrue(new File(randomOutputDir + "log-x").mkdirs());
+        configure(SIFT_FOLDER_PREFIX + "fileAppender.xml");
+        SiftingAppender sa = (SiftingAppender) root.getAppender("SIFT");
+
+        String escapedName = "escaped-" + diff + ".txt";
+        logbackMDCAdapter.put("collision", "x${file.separator}..${file.separator}..${file.separator}escaped-" + diff);
+        logNewEventViaSiftingAppender(sa, System.currentTimeMillis());
+
+        FileAppender<ILoggingEvent> fileAppender = singleFileAppender(sa);
+        File logFile = new File(fileAppender.getFile()).getCanonicalFile();
+        assertEquals(new File(randomOutputDir).getCanonicalFile(), logFile.getParentFile());
+        assertEquals("log-collisionDefault.txt", logFile.getName());
+        assertFalse(new File(CoreTestConstants.OUTPUT_DIR_PREFIX + escapedName).exists());
+    }
+
+    /**
+     * Date conversions such as <code>%d{/.}</code> in an MDC value must not allow
+     * a nested RollingFileAppender to write outside the directory configured in
+     * its file name pattern.
+     */
+    @Test
+    public void pathTraversalViaFileNamePatternInMdcValueIsPrevented() throws JoranException, IOException {
+        loggerContext.putProperty("DIR_PREFIX", randomOutputDir);
+        assertTrue(new File(randomOutputDir + "roll-x").mkdirs());
+        configure(SIFT_FOLDER_PREFIX + "rollingFileAppender.xml");
+        SiftingAppender sa = (SiftingAppender) root.getAppender("SIFT");
+
+        String escapedPrefix = "escaped-" + diff;
+        logbackMDCAdapter.put("collision", "x%d{/.,aux}.%d{/.,aux}.%d{/,aux}" + escapedPrefix);
+        logNewEventViaSiftingAppender(sa, System.currentTimeMillis());
+
+        FileAppender<ILoggingEvent> fileAppender = singleFileAppender(sa);
+        File logFile = new File(fileAppender.getFile()).getCanonicalFile();
+        assertEquals(new File(randomOutputDir).getCanonicalFile(), logFile.getParentFile());
+        assertTrue(logFile.getName().startsWith("roll-collisionDefault-"), logFile.getName());
+        String[] escaped = new File(CoreTestConstants.OUTPUT_DIR_PREFIX).list((dir, name) -> name.startsWith(escapedPrefix));
+        assertEquals(0, escaped == null ? 0 : escaped.length);
+    }
+
     private FileAppender<ILoggingEvent> singleFileAppender(SiftingAppender sa) {
         Collection<Appender<ILoggingEvent>> appenders = sa.getAppenderTracker().allComponents();
         assertEquals(1, appenders.size());

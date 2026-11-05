@@ -28,8 +28,8 @@ import java.util.Map;
  * </p>
  * <p>
  * MDC values which could point outside the directory of a file name built from
- * them, e.g. {@code ../x} or {@code /x}, are rejected and the DefaultValue is
- * returned instead.
+ * them, e.g. {@code ../x}, {@code /x}, {@code x${file.separator}..} or
+ * {@code x%d{/.}.}, are rejected and the DefaultValue is returned instead.
  * </p>
  *
  * @author Ceki G&uuml;lc&uuml;
@@ -40,6 +40,8 @@ public class MDCBasedDiscriminator extends AbstractDiscriminator<ILoggingEvent> 
     private static final char BACKWARD_SLASH = '\\';
     private static final char DOT = '.';
     private static final char SPACE = ' ';
+    private static final char PERCENT = '%';
+    private static final String VARIABLE_START = "${";
 
     private String key;
     private String defaultValue;
@@ -80,14 +82,29 @@ public class MDCBasedDiscriminator extends AbstractDiscriminator<ILoggingEvent> 
      * the official fix. A bare {@code C:x} is accepted, as in the official fix.
      * </p>
      * <p>
+     * It is also the case if the value contains {@code ${}, which the nested
+     * configuration would expand as a variable reference such as
+     * <code>${file.separator}</code>, or {@code %}, which a rolling file name
+     * pattern would expand as a conversion such as <code>%d{/}</code>. Both can
+     * produce path separators and parent references which are not visible in the
+     * value itself.
+     * </p>
+     * <p>
+     * An empty value is rejected too, since it disappears from the file name and
+     * can turn a relative path such as <code>${key}/app.log</code> into an
+     * absolute one.
+     * </p>
+     * <p>
      * Separators inside the value are allowed, so that values such as
      * {@code tenantA/user1} keep mapping to nested directories.
      * </p>
      */
     static boolean isSafeDiscriminatingValue(String value) {
         final int len = value.length();
+        // an empty value disappears from the file name, so a template such as
+        // "${key}/app.log" would turn into the absolute path "/app.log"
         if (len == 0) {
-            return true;
+            return false;
         }
         char first = value.charAt(0);
         if (isPathSeparator(first)) {
@@ -98,6 +115,9 @@ public class MDCBasedDiscriminator extends AbstractDiscriminator<ILoggingEvent> 
         if (len > 1 && value.charAt(1) == ':' && isAsciiLetter(first)
                 && (value.indexOf(FORWARD_SLASH) != -1 || value.indexOf(BACKWARD_SLASH) != -1
                         || value.contains(".."))) {
+            return false;
+        }
+        if (value.indexOf(VARIABLE_START) != -1 || value.indexOf(PERCENT) != -1) {
             return false;
         }
 
